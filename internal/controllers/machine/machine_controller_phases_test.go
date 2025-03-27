@@ -17,6 +17,7 @@ limitations under the License.
 package machine
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestReconcileBootstrap(t *testing.T) {
 		Spec: clusterv1.MachineSpec{
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+					APIVersion: clusterv1.GroupVersionBootstrap.String(),
 					Kind:       "GenericBootstrapConfig",
 					Name:       "bootstrap-config1",
 					Namespace:  metav1.NamespaceDefault,
@@ -73,6 +74,7 @@ func TestReconcileBootstrap(t *testing.T) {
 
 	testCases := []struct {
 		name                    string
+		contract                string
 		machine                 *clusterv1.Machine
 		bootstrapConfig         map[string]interface{}
 		bootstrapConfigGetError error
@@ -82,6 +84,7 @@ func TestReconcileBootstrap(t *testing.T) {
 	}{
 		{
 			name:                    "no op if bootstrap config ref is not set",
+			contract:                "v1beta1",
 			machine:                 &clusterv1.Machine{},
 			bootstrapConfig:         nil,
 			bootstrapConfigGetError: nil,
@@ -90,6 +93,7 @@ func TestReconcileBootstrap(t *testing.T) {
 		},
 		{
 			name:                    "err reading bootstrap config (something different than not found), it should return error",
+			contract:                "v1beta1",
 			machine:                 defaultMachine.DeepCopy(),
 			bootstrapConfig:         nil,
 			bootstrapConfigGetError: errors.New("some error"),
@@ -98,6 +102,7 @@ func TestReconcileBootstrap(t *testing.T) {
 		},
 		{
 			name:                    "bootstrap config is not found, it should requeue",
+			contract:                "v1beta1",
 			machine:                 defaultMachine.DeepCopy(),
 			bootstrapConfig:         nil,
 			bootstrapConfigGetError: nil,
@@ -108,11 +113,12 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 		},
 		{
-			name:    "bootstrap config not ready, it should reconcile but no data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "bootstrap config not ready, it should reconcile but no data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "GenericBootstrapConfig",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -132,11 +138,12 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 		},
 		{
-			name:    "bootstrap config ready with data, it should reconcile and data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "bootstrap config ready with data, it should reconcile and data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "GenericBootstrapConfig",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -157,11 +164,12 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 		},
 		{
-			name:    "bootstrap config ready and paused, it should reconcile and data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "bootstrap config ready and paused, it should reconcile and data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "GenericBootstrapConfig",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -185,11 +193,43 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 		},
 		{
-			name:    "bootstrap config ready with no bootstrap secret",
-			machine: defaultMachine.DeepCopy(),
+			name:     "bootstrap config ready and paused, it should reconcile and data should surface on the machine (v1beta2)",
+			contract: "v1beta2",
+			machine:  defaultMachine.DeepCopy(),
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "GenericBootstrapConfig",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionBootstrap.String(),
+				"metadata": map[string]interface{}{
+					"name":      "bootstrap-config1",
+					"namespace": metav1.NamespaceDefault,
+					"annotations": map[string]interface{}{
+						"cluster.x-k8s.io/paused": "true",
+					},
+				},
+				"spec": map[string]interface{}{},
+				"status": map[string]interface{}{
+					"initialization": map[string]interface{}{
+						"dataSecretCreated": true,
+					},
+					"dataSecretName": "secret-data",
+				},
+			},
+			bootstrapConfigGetError: nil,
+			expectResult:            ctrl.Result{},
+			expectError:             false,
+			expected: func(g *WithT, m *clusterv1.Machine) {
+				g.Expect(m.Status.BootstrapReady).To(BeTrue())
+				g.Expect(m.Spec.Bootstrap.DataSecretName).NotTo(BeNil())
+				g.Expect(*m.Spec.Bootstrap.DataSecretName).To(Equal("secret-data"))
+			},
+		},
+		{
+			name:     "bootstrap config ready with no bootstrap secret",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
+			bootstrapConfig: map[string]interface{}{
+				"kind":       "GenericBootstrapConfig",
+				"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -208,7 +248,8 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 		},
 		{
-			name: "bootstrap data secret and bootstrap ready should not change after bootstrap config is set",
+			name:     "bootstrap data secret and bootstrap ready should not change after bootstrap config is set",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "bootstrap-test-existing",
@@ -217,7 +258,7 @@ func TestReconcileBootstrap(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+							APIVersion: clusterv1.GroupVersionBootstrap.String(),
 							Kind:       "GenericBootstrapConfig",
 							Name:       "bootstrap-config1",
 							Namespace:  metav1.NamespaceDefault,
@@ -231,7 +272,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "GenericBootstrapConfig",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -251,7 +292,8 @@ func TestReconcileBootstrap(t *testing.T) {
 			},
 		},
 		{
-			name: "bootstrap config not found is tolerated when machine is deleting",
+			name:     "bootstrap config not found is tolerated when machine is deleting",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "deleting-machine",
@@ -262,7 +304,7 @@ func TestReconcileBootstrap(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+							APIVersion: clusterv1.GroupVersionBootstrap.String(),
 							Kind:       "GenericBootstrapConfig",
 							Name:       "bootstrap-config1",
 							Namespace:  metav1.NamespaceDefault,
@@ -299,7 +341,12 @@ func TestReconcileBootstrap(t *testing.T) {
 				WithObjects(tc.machine).Build()
 
 			if tc.bootstrapConfigGetError == nil {
-				g.Expect(c.Create(ctx, builder.GenericBootstrapConfigCRD.DeepCopy())).To(Succeed())
+				crd := builder.GenericBootstrapConfigCRD.DeepCopy()
+				crd.Labels = map[string]string{
+					// Set contract label for tc.contract.
+					fmt.Sprintf("%s/%s", clusterv1.GroupVersion.Group, tc.contract): clusterv1.GroupVersionBootstrap.Version,
+				}
+				g.Expect(c.Create(ctx, crd)).To(Succeed())
 			}
 
 			if bootstrapConfig != nil {
@@ -314,6 +361,7 @@ func TestReconcileBootstrap(t *testing.T) {
 					Scheme:          runtime.NewScheme(),
 					PredicateLogger: ptr.To(logr.New(log.NullLogSink{})),
 				},
+				currentContractVersion: tc.contract,
 			}
 			s := &scope{cluster: defaultCluster, machine: tc.machine}
 			res, err := r.reconcileBootstrap(ctx, s)
@@ -342,7 +390,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+				APIVersion: clusterv1.GroupVersionInfrastructure.String(),
 				Kind:       "GenericInfrastructureMachine",
 				Name:       "infra-config1",
 				Namespace:  metav1.NamespaceDefault,
@@ -359,6 +407,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 
 	testCases := []struct {
 		name                 string
+		contract             string
 		machine              *clusterv1.Machine
 		infraMachine         map[string]interface{}
 		infraMachineGetError error
@@ -368,6 +417,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 	}{
 		{
 			name:                 "err reading infra machine (something different than not found), it should return error",
+			contract:             "v1beta1",
 			machine:              defaultMachine.DeepCopy(),
 			infraMachine:         nil,
 			infraMachineGetError: errors.New("some error"),
@@ -376,6 +426,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 		},
 		{
 			name:                 "infra machine not found and infrastructure not yet ready, it should requeue",
+			contract:             "v1beta1",
 			machine:              defaultMachine.DeepCopy(),
 			infraMachine:         nil,
 			infraMachineGetError: nil,
@@ -388,11 +439,12 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name:    "infra machine not ready, it should reconcile but no data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "infra machine not ready, it should reconcile but no data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -425,11 +477,12 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name:    "infra machine ready and without optional fields, it should reconcile and data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "infra machine ready and without optional fields, it should reconcile and data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -452,11 +505,42 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name:    "infra machine ready and with optional failure domain, it should reconcile and data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "infra machine ready and without optional fields, it should reconcile and data should surface on the machine (v1beta2)",
+			contract: "v1beta2",
+			machine:  defaultMachine.DeepCopy(),
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
+				"metadata": map[string]interface{}{
+					"name":      "infra-config1",
+					"namespace": metav1.NamespaceDefault,
+				},
+				"spec": map[string]interface{}{
+					"providerID": "test://id-1",
+				},
+				"status": map[string]interface{}{
+					"initialization": map[string]interface{}{
+						"provisioned": true,
+					},
+				},
+			},
+			infraMachineGetError: nil,
+			expectResult:         ctrl.Result{},
+			expectError:          false,
+			expected: func(g *WithT, m *clusterv1.Machine) {
+				g.Expect(m.Status.InfrastructureReady).To(BeTrue())
+				g.Expect(ptr.Deref(m.Spec.ProviderID, "")).To(Equal("test://id-1"))
+				g.Expect(m.Spec.FailureDomain).To(BeNil())
+				g.Expect(m.Status.Addresses).To(BeNil())
+			},
+		},
+		{
+			name:     "infra machine ready and with optional failure domain, it should reconcile and data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
+			infraMachine: map[string]interface{}{
+				"kind":       "GenericInfrastructureMachine",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -480,11 +564,12 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name:    "infra machine ready and with optional addresses, it should reconcile and data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "infra machine ready and with optional addresses, it should reconcile and data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -517,11 +602,12 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name:    "infra machine ready and with all the optional fields, it should reconcile and data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "infra machine ready and with all the optional fields, it should reconcile and data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -555,11 +641,12 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name:    "infra machine ready and paused, it should reconcile and data should surface on the machine",
-			machine: defaultMachine.DeepCopy(),
+			name:     "infra machine ready and paused, it should reconcile and data should surface on the machine",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -596,11 +683,12 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name:    "infra machine ready and no provider ID, it should fail",
-			machine: defaultMachine.DeepCopy(),
+			name:     "infra machine ready and no provider ID, it should fail",
+			contract: "v1beta1",
+			machine:  defaultMachine.DeepCopy(),
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -615,7 +703,8 @@ func TestReconcileInfrastructure(t *testing.T) {
 			expectError:          true,
 		},
 		{
-			name: "should never revert back to infrastructure not ready",
+			name:     "should never revert back to infrastructure not ready",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "machine-test",
@@ -623,7 +712,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						APIVersion: clusterv1.GroupVersionInfrastructure.String(),
 						Kind:       "GenericInfrastructureMachine",
 						Name:       "infra-config1",
 						Namespace:  metav1.NamespaceDefault,
@@ -643,7 +732,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -677,7 +766,8 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name: "should change data also after infrastructure ready is set",
+			name:     "should change data also after infrastructure ready is set",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "machine-test",
@@ -685,7 +775,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						APIVersion: clusterv1.GroupVersionInfrastructure.String(),
 						Kind:       "GenericInfrastructureMachine",
 						Name:       "infra-config1",
 						Namespace:  metav1.NamespaceDefault,
@@ -705,7 +795,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 			infraMachine: map[string]interface{}{
 				"kind":       "GenericInfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1beta1",
+				"apiVersion": clusterv1.GroupVersionInfrastructure.String(),
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": metav1.NamespaceDefault,
@@ -739,7 +829,8 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name: "err reading infra machine when infrastructure have been ready (something different than not found), it should return error",
+			name:     "err reading infra machine when infrastructure have been ready (something different than not found), it should return error",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "machine-test",
@@ -747,7 +838,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						APIVersion: clusterv1.GroupVersionInfrastructure.String(),
 						Kind:       "GenericInfrastructureMachine",
 						Name:       "infra-config1",
 						Namespace:  metav1.NamespaceDefault,
@@ -768,7 +859,8 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name: "infra machine not found when infrastructure have been ready, should be treated as terminal error",
+			name:     "infra machine not found when infrastructure have been ready, should be treated as terminal error",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "machine-test",
@@ -776,7 +868,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						APIVersion: clusterv1.GroupVersionInfrastructure.String(),
 						Kind:       "GenericInfrastructureMachine",
 						Name:       "infra-config1",
 						Namespace:  metav1.NamespaceDefault,
@@ -797,7 +889,8 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 		},
 		{
-			name: "infra machine is not found is tolerated when infrastructure not yet ready and machine is deleting",
+			name:     "infra machine is not found is tolerated when infrastructure not yet ready and machine is deleting",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "deleting-machine",
@@ -807,7 +900,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						APIVersion: clusterv1.GroupVersionInfrastructure.String(),
 						Kind:       "GenericInfrastructureMachine",
 						Name:       "infra-config1",
 						Namespace:  metav1.NamespaceDefault,
@@ -824,7 +917,8 @@ func TestReconcileInfrastructure(t *testing.T) {
 			expected:             func(_ *WithT, _ *clusterv1.Machine) {},
 		},
 		{
-			name: "infra machine is not found is tolerated when infrastructure ready and machine is deleting",
+			name:     "infra machine is not found is tolerated when infrastructure ready and machine is deleting",
+			contract: "v1beta1",
 			machine: &clusterv1.Machine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "deleting-machine",
@@ -834,7 +928,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 				},
 				Spec: clusterv1.MachineSpec{
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						APIVersion: clusterv1.GroupVersionInfrastructure.String(),
 						Kind:       "GenericInfrastructureMachine",
 						Name:       "infra-config1",
 						Namespace:  metav1.NamespaceDefault,
@@ -864,7 +958,12 @@ func TestReconcileInfrastructure(t *testing.T) {
 				WithObjects(tc.machine).Build()
 
 			if tc.infraMachineGetError == nil {
-				g.Expect(c.Create(ctx, builder.GenericInfrastructureMachineCRD.DeepCopy())).To(Succeed())
+				crd := builder.GenericInfrastructureMachineCRD.DeepCopy()
+				crd.Labels = map[string]string{
+					// Set contract label for tc.contract.
+					fmt.Sprintf("%s/%s", clusterv1.GroupVersion.Group, tc.contract): clusterv1.GroupVersionInfrastructure.Version,
+				}
+				g.Expect(c.Create(ctx, crd)).To(Succeed())
 			}
 
 			if infraMachine != nil {
@@ -879,6 +978,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 					Scheme:          c.Scheme(),
 					PredicateLogger: ptr.To(logr.New(log.NullLogSink{})),
 				},
+				currentContractVersion: tc.contract,
 			}
 			s := &scope{cluster: defaultCluster, machine: tc.machine}
 			result, err := r.reconcileInfrastructure(ctx, s)
@@ -908,7 +1008,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 	bootstrapConfigWithExpiry := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericBootstrapConfig",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config-with-expiry",
 				"namespace": metav1.NamespaceDefault,
@@ -927,7 +1027,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 	bootstrapConfigWithoutExpiry := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "GenericBootstrapConfig",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1beta1",
+			"apiVersion": clusterv1.GroupVersionBootstrap.String(),
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config-without-expiry",
 				"namespace": metav1.NamespaceDefault,
@@ -995,7 +1095,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+							APIVersion: clusterv1.GroupVersionBootstrap.String(),
 							Kind:       "GenericBootstrapConfig",
 							Name:       "bootstrap-config-without-expiry",
 						},
@@ -1020,7 +1120,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+							APIVersion: clusterv1.GroupVersionBootstrap.String(),
 							Kind:       "GenericBootstrapConfig",
 							Name:       "bootstrap-config-with-expiry",
 						},
@@ -1048,7 +1148,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+							APIVersion: clusterv1.GroupVersionBootstrap.String(),
 							Kind:       "GenericBootstrapConfig",
 							Name:       "bootstrap-config-without-expiry",
 						},
@@ -1076,7 +1176,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+							APIVersion: clusterv1.GroupVersionBootstrap.String(),
 							Kind:       "GenericBootstrapConfig",
 							Name:       "bootstrap-config-with-expiry",
 						},
@@ -1101,7 +1201,7 @@ func TestReconcileCertificateExpiry(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1beta1",
+							APIVersion: clusterv1.GroupVersionBootstrap.String(),
 							Kind:       "GenericBootstrapConfig",
 							Name:       "bootstrap-config-without-expiry",
 						},

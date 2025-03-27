@@ -53,6 +53,7 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/controllers/noderefutil"
 	"sigs.k8s.io/cluster-api/feature"
+	"sigs.k8s.io/cluster-api/internal/contract"
 	"sigs.k8s.io/cluster-api/internal/controllers/machine/drain"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
@@ -117,6 +118,10 @@ type Reconciler struct {
 	reconcileDeleteCache cache.Cache[cache.ReconcileEntry]
 
 	predicateLog *logr.Logger
+
+	// currentContractVersion should only be used in unit tests to test behavior with other
+	// than the current contract versions. Defaults to contract.Version.
+	currentContractVersion string
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -184,7 +189,8 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 		Scheme:          mgr.GetScheme(),
 		PredicateLogger: r.predicateLog,
 	}
-	r.reconcileDeleteCache = cache.New[cache.ReconcileEntry]()
+	r.reconcileDeleteCache = cache.New[cache.ReconcileEntry](cache.DefaultTTL)
+	r.currentContractVersion = contract.Version
 	return nil
 }
 
@@ -631,15 +637,12 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, s *scope) (ctrl.Result
 }
 
 const (
-	// KubeadmControlPlaneAPIVersion inlined from KCP (we want to avoid importing the KCP API package).
-	KubeadmControlPlaneAPIVersion = "controlplane.cluster.x-k8s.io/v1beta1"
-
 	// KubeadmControlPlanePreTerminateHookCleanupAnnotation inlined from KCP (we want to avoid importing the KCP API package).
 	KubeadmControlPlanePreTerminateHookCleanupAnnotation = clusterv1.PreTerminateDeleteHookAnnotationPrefix + "/kcp-cleanup"
 )
 
 func (r *Reconciler) isNodeDrainAllowed(m *clusterv1.Machine) bool {
-	if util.IsControlPlaneMachine(m) && util.HasOwner(m.GetOwnerReferences(), KubeadmControlPlaneAPIVersion, []string{"KubeadmControlPlane"}) {
+	if util.IsControlPlaneMachine(m) && util.HasOwner(m.GetOwnerReferences(), clusterv1.GroupVersionControlPlane.String(), []string{"KubeadmControlPlane"}) {
 		if _, exists := m.Annotations[KubeadmControlPlanePreTerminateHookCleanupAnnotation]; !exists {
 			return false
 		}
@@ -659,7 +662,7 @@ func (r *Reconciler) isNodeDrainAllowed(m *clusterv1.Machine) bool {
 // isNodeVolumeDetachingAllowed returns False if either ExcludeWaitForNodeVolumeDetachAnnotation annotation is set OR
 // nodeVolumeDetachTimeoutExceeded timeout is exceeded, otherwise returns True.
 func (r *Reconciler) isNodeVolumeDetachingAllowed(m *clusterv1.Machine) bool {
-	if util.IsControlPlaneMachine(m) && util.HasOwner(m.GetOwnerReferences(), KubeadmControlPlaneAPIVersion, []string{"KubeadmControlPlane"}) {
+	if util.IsControlPlaneMachine(m) && util.HasOwner(m.GetOwnerReferences(), clusterv1.GroupVersionControlPlane.String(), []string{"KubeadmControlPlane"}) {
 		if _, exists := m.Annotations[KubeadmControlPlanePreTerminateHookCleanupAnnotation]; !exists {
 			return false
 		}
